@@ -44,7 +44,7 @@ chmod 700 /run/user/0
 1.  **Подключитесь к вашему серверу** (рекомендуется Ubuntu 22.04).
 2.  **Выполните команду:**
     ```bash
-    rm -f gem.sh && wget -nc --no-cache https://raw.githubusercontent.com/node-trip/GenSyn-Node/refs/heads/main/gem.sh && chmod +x gem.sh && ./gem.sh
+    rm -f gem.sh && wget -nc --no-cache https://raw.githubusercontent.com/node-trip/GenSyn-Node/refs/heads/main/gen.sh && chmod +x gen.sh && ./gen.sh
     ```
 3.  **Выберите опцию 1** "Полная установка ноды". Скрипт установит все необходимое и подготовит систему.
 4.  **Выполните ручной запуск ноды:**
