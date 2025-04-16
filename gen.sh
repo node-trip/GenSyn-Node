@@ -257,10 +257,27 @@ delete_node() {
     fi
 }
 
+# Функция для включения мониторинга
+enable_monitoring() {
+    # Проверяем, запущен ли уже мониторинг
+    if [ -f "$MONITOR_PID_FILE" ] && kill -0 "$(cat "$MONITOR_PID_FILE")" 2>/dev/null; then
+        echo -e "${YELLOW}Мониторинг уже запущен (PID: $(cat "$MONITOR_PID_FILE")).${NC}"
+        return 0
+    fi
+    
+    # Создаем директорию для логов, если она не существует
+    mkdir -p "$MONITOR_LOG_DIR"
+    
+    # Создаем скрипт монитора, который будет запущен через nohup
+    local monitor_script="$MONITOR_LOG_DIR/monitor_script.sh"
+    cat > "$monitor_script" << 'EOF'
+#!/bin/bash
+MONITOR_LOG_FILE="$1"
+SWARM_DIR="$2"
+
 # Функция проверки использования памяти
 check_memory_usage() {
-    # Получаем статистику памяти из команды free, 
-    # вычисляем процент использования: (used/total)*100
+    # Получаем статистику памяти из команды free
     local mem_stats=$(free | grep Mem)
     local total_mem=$(echo $mem_stats | awk '{print $2}')
     local used_mem=$(echo $mem_stats | awk '{print $3}')
@@ -273,7 +290,8 @@ check_memory_usage() {
     # Проверяем, если использование памяти меньше 20%, перезапускаем ноду
     if [ $mem_usage_percent -lt 20 ]; then
         echo "[$timestamp] ВНИМАНИЕ: Низкое использование памяти ($mem_usage_percent%). Перезапуск ноды..." >> "$MONITOR_LOG_FILE"
-        restart_node
+        # Вызываем функцию перезапуска
+        "$SWARM_DIR/../restart_gensyn_node.sh"
         echo "[$timestamp] Перезапуск выполнен." >> "$MONITOR_LOG_FILE"
     fi
 }
@@ -288,7 +306,7 @@ check_screen_logs() {
         return 0
     fi
     
-    # Сохраняем последние 100 строк логов screen в временный файл
+    # Сохраняем содержимое экрана screen в временный файл
     local tmp_log_file=$(mktemp)
     # Используем hardcopy для получения содержимого экрана screen
     screen -S gensyn -X hardcopy "$tmp_log_file"
@@ -309,7 +327,8 @@ check_screen_logs() {
         echo "[$timestamp] ВНИМАНИЕ: Обнаружена ошибка '$error_type' в логах. Перезапуск ноды..." >> "$MONITOR_LOG_FILE"
         # Удаляем временный файл
         rm -f "$tmp_log_file"
-        restart_node
+        # Вызываем функцию перезапуска
+        "$SWARM_DIR/../restart_gensyn_node.sh"
         echo "[$timestamp] Перезапуск выполнен из-за ошибки '$error_type'." >> "$MONITOR_LOG_FILE"
     else
         echo "[$timestamp] Ошибок в логах не обнаружено." >> "$MONITOR_LOG_FILE"
@@ -318,30 +337,72 @@ check_screen_logs() {
     fi
 }
 
-# Функция для включения мониторинга
-enable_monitoring() {
-    # Проверяем, запущен ли уже мониторинг
-    if [ -f "$MONITOR_PID_FILE" ] && kill -0 "$(cat "$MONITOR_PID_FILE")" 2>/dev/null; then
-        echo -e "${YELLOW}Мониторинг уже запущен (PID: $(cat "$MONITOR_PID_FILE")).${NC}"
-        return 0
+# Основной цикл проверки
+while true; do
+    check_memory_usage
+    check_screen_logs
+    sleep 1800 # 30 минут
+done
+EOF
+
+    # Создаем скрипт для перезапуска ноды
+    local restart_script="$HOME/restart_gensyn_node.sh"
+    cat > "$restart_script" << EOF
+#!/bin/bash
+
+# Функция для перезапуска ноды
+restart_node() {
+    # Проверка, существует ли сессия screen
+    if screen -list | grep -q "gensyn"; then
+        # Отправляем Ctrl+C в screen
+        screen -S gensyn -p 0 -X stuff $'\003'
+        sleep 2 # Даем время на обработку Ctrl+C
+        # Завершаем сессию окончательно
+        screen -S gensyn -X quit 2>/dev/null
     fi
-    
-    # Создаем директорию для логов, если она не существует
-    mkdir -p "$MONITOR_LOG_DIR"
-    
-    # Запускаем мониторинг в фоновом режиме
-    echo -e "${YELLOW}[!] Запуск мониторинга...${NC}"
-    (
-        while true; do
-            check_memory_usage
-            check_screen_logs
-            sleep 1800 # 30 минут
-        done
-    ) &
+
+    # Завершение оставшихся процессов
+    pkill -f hivemind_exp.gsm8k.train_single_gpu
+    pkill -f hivemind/hivemind_cli/p2pd
+    pkill -f run_rl_swarm.sh
+    sleep 2
+
+    # Проверяем наличие директории ноды
+    if [ ! -d "$SWARM_DIR" ]; then
+        exit 1
+    fi
+
+    # Добавляем права на выполнение
+    chmod +x "$SWARM_DIR/run_rl_swarm.sh"
+
+    # Команда для запуска внутри screen
+    local restart_script_cmd="
+    cd $SWARM_DIR || exit 1
+    echo -e 'Активация виртуального окружения...'
+    source .venv/bin/activate || exit 1
+    echo -e 'Запуск rl-swarm...'
+    ./run_rl_swarm.sh
+    "
+
+    # Запуск новой ноды в screen
+    screen -dmS gensyn bash -c "\$restart_script_cmd; exec bash"
+}
+
+# Запуск функции перезапуска
+restart_node
+EOF
+
+    # Делаем скрипты исполняемыми
+    chmod +x "$monitor_script"
+    chmod +x "$restart_script"
+
+    # Запускаем мониторинг через nohup, чтобы он работал даже после закрытия терминала
+    echo -e "${YELLOW}[!] Запуск мониторинга, независимого от терминала...${NC}"
+    nohup "$monitor_script" "$MONITOR_LOG_FILE" "$SWARM_DIR" > "$MONITOR_LOG_DIR/nohup.out" 2>&1 &
     
     # Сохраняем PID фонового процесса
     echo $! > "$MONITOR_PID_FILE"
-    echo -e "${GREEN}${BOLD}[✓] Мониторинг запущен (PID: $(cat "$MONITOR_PID_FILE")).${NC}"
+    echo -e "${GREEN}${BOLD}[✓] Мониторинг запущен (PID: $(cat "$MONITOR_PID_FILE")) и будет работать даже после закрытия терминала.${NC}"
     echo -e "${YELLOW}Каждые 30 минут будет проверяться использование памяти и наличие ошибок.${NC}"
     echo -e "${YELLOW}Нода будет автоматически перезапущена, если:${NC}"
     echo -e "${YELLOW} - Использование памяти меньше 20%${NC}"
