@@ -43,6 +43,21 @@ HUGGINGFACE_ACCESS_TOKEN="None"
     fi
 }
 
+# Функция для отложенного запуска мониторинга
+delayed_monitoring_start() {
+    # Проверяем, не запущен ли уже отложенный запуск
+    if pgrep -f "sleep.*enable_monitoring" >/dev/null; then
+        return 0
+    fi
+    
+    echo -e "${YELLOW}[!] Планирование автоматического запуска мониторинга через 10 минут...${NC}"
+    
+    # Запускаем отложенную активацию мониторинга в фоновом режиме через nohup
+    nohup bash -c "sleep 600 && cd $(pwd) && source $(pwd)/gen.sh && if ! [ -f '$MONITOR_PID_FILE' ] || ! kill -0 \$(cat '$MONITOR_PID_FILE') 2>/dev/null; then enable_monitoring; fi" > /dev/null 2>&1 &
+    
+    echo -e "${GREEN}[✓] Мониторинг будет автоматически запущен через 10 минут, если еще не активен.${NC}"
+}
+
 # Функция для установки и запуска ноды
 install_and_run() {
     echo -e "${BLUE}${BOLD}=== Установка зависимостей ===${NC}"
@@ -162,6 +177,9 @@ install_and_run() {
     echo -e "${GREEN}${BOLD}[✓] Нода запущена в screen сессии 'gensyn'.${NC}"
     echo -e "${YELLOW}Чтобы подключиться к сессии, используйте команду: ${NC}${BOLD}screen -r gensyn${NC}"
     echo -e "${YELLOW}Чтобы отключиться от сессии (оставив ноду работать), нажмите ${NC}${BOLD}Ctrl+A, затем D${NC}"
+    
+    # Запускаем мониторинг с задержкой
+    delayed_monitoring_start
 }
 
 # Функция для перезапуска ноды
@@ -221,6 +239,9 @@ restart_node() {
 
     echo -e "${GREEN}${BOLD}[✓] Нода перезапущена в screen сессии 'gensyn'.${NC}"
     echo -e "${YELLOW}Чтобы подключиться к сессии, используйте команду: ${NC}${BOLD}screen -r gensyn${NC}"
+    
+    # Запускаем мониторинг с задержкой
+    delayed_monitoring_start
 }
 
 # Функция для просмотра логов (подключения к screen)
