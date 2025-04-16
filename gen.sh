@@ -270,11 +270,49 @@ check_memory_usage() {
     local timestamp=$(date "+%Y-%m-%d %H:%M:%S")
     echo "[$timestamp] Использование памяти: $mem_usage_percent%" >> "$MONITOR_LOG_FILE"
     
-    # Проверяем, если использование памяти меньше 10%, перезапускаем ноду
-    if [ $mem_usage_percent -lt 10 ]; then
+    # Проверяем, если использование памяти меньше 20%, перезапускаем ноду
+    if [ $mem_usage_percent -lt 20 ]; then
         echo "[$timestamp] ВНИМАНИЕ: Низкое использование памяти ($mem_usage_percent%). Перезапуск ноды..." >> "$MONITOR_LOG_FILE"
         restart_node
         echo "[$timestamp] Перезапуск выполнен." >> "$MONITOR_LOG_FILE"
+    fi
+}
+
+# Функция для проверки наличия ошибок в логах screen
+check_screen_logs() {
+    local timestamp=$(date "+%Y-%m-%d %H:%M:%S")
+    
+    # Проверяем, существует ли сессия screen
+    if ! screen -list | grep -q "gensyn"; then
+        echo "[$timestamp] Screen сессия 'gensyn' не найдена. Пропускаем проверку логов." >> "$MONITOR_LOG_FILE"
+        return 0
+    fi
+    
+    # Сохраняем последние 100 строк логов screen в временный файл
+    local tmp_log_file=$(mktemp)
+    # Используем hardcopy для получения содержимого экрана screen
+    screen -S gensyn -X hardcopy "$tmp_log_file"
+    
+    # Проверяем наличие ошибок
+    if grep -q -E "timed out|KeyError: 'question'|Killed" "$tmp_log_file"; then
+        local error_type="unknown"
+        if grep -q "timed out" "$tmp_log_file"; then
+            error_type="timed out"
+        elif grep -q "KeyError: 'question'" "$tmp_log_file"; then
+            error_type="KeyError: 'question'"
+        elif grep -q "Killed" "$tmp_log_file"; then
+            error_type="Killed"
+        fi
+        
+        echo "[$timestamp] ВНИМАНИЕ: Обнаружена ошибка '$error_type' в логах. Перезапуск ноды..." >> "$MONITOR_LOG_FILE"
+        # Удаляем временный файл
+        rm -f "$tmp_log_file"
+        restart_node
+        echo "[$timestamp] Перезапуск выполнен из-за ошибки '$error_type'." >> "$MONITOR_LOG_FILE"
+    else
+        echo "[$timestamp] Ошибок в логах не обнаружено." >> "$MONITOR_LOG_FILE"
+        # Удаляем временный файл
+        rm -f "$tmp_log_file"
     fi
 }
 
@@ -282,7 +320,7 @@ check_memory_usage() {
 enable_monitoring() {
     # Проверяем, запущен ли уже мониторинг
     if [ -f "$MONITOR_PID_FILE" ] && kill -0 "$(cat "$MONITOR_PID_FILE")" 2>/dev/null; then
-        echo -e "${YELLOW}Мониторинг памяти уже запущен (PID: $(cat "$MONITOR_PID_FILE")).${NC}"
+        echo -e "${YELLOW}Мониторинг уже запущен (PID: $(cat "$MONITOR_PID_FILE")).${NC}"
         return 0
     fi
     
@@ -290,18 +328,22 @@ enable_monitoring() {
     mkdir -p "$MONITOR_LOG_DIR"
     
     # Запускаем мониторинг в фоновом режиме
-    echo -e "${YELLOW}[!] Запуск мониторинга памяти...${NC}"
+    echo -e "${YELLOW}[!] Запуск мониторинга...${NC}"
     (
         while true; do
             check_memory_usage
+            check_screen_logs
             sleep 1800 # 30 минут
         done
     ) &
     
     # Сохраняем PID фонового процесса
     echo $! > "$MONITOR_PID_FILE"
-    echo -e "${GREEN}${BOLD}[✓] Мониторинг памяти запущен (PID: $(cat "$MONITOR_PID_FILE")).${NC}"
-    echo -e "${YELLOW}Каждые 30 минут будет проверяться использование памяти. Нода будет автоматически перезапущена, если использование памяти меньше 10%.${NC}"
+    echo -e "${GREEN}${BOLD}[✓] Мониторинг запущен (PID: $(cat "$MONITOR_PID_FILE")).${NC}"
+    echo -e "${YELLOW}Каждые 30 минут будет проверяться использование памяти и наличие ошибок.${NC}"
+    echo -e "${YELLOW}Нода будет автоматически перезапущена, если:${NC}"
+    echo -e "${YELLOW} - Использование памяти меньше 20%${NC}"
+    echo -e "${YELLOW} - В логах обнаружены ошибки 'timed out', 'KeyError: question' или 'Killed'${NC}"
     echo -e "${YELLOW}Логи сохраняются в файл: ${MONITOR_LOG_FILE}${NC}"
 }
 
@@ -310,17 +352,17 @@ disable_monitoring() {
     if [ -f "$MONITOR_PID_FILE" ]; then
         local pid=$(cat "$MONITOR_PID_FILE")
         if kill -0 "$pid" 2>/dev/null; then
-            echo -e "${YELLOW}[!] Остановка мониторинга памяти (PID: $pid)...${NC}"
+            echo -e "${YELLOW}[!] Остановка мониторинга (PID: $pid)...${NC}"
             kill "$pid"
             rm -f "$MONITOR_PID_FILE"
-            echo -e "${GREEN}${BOLD}[✓] Мониторинг памяти остановлен.${NC}"
+            echo -e "${GREEN}${BOLD}[✓] Мониторинг остановлен.${NC}"
         else
             echo -e "${YELLOW}[!] Процесс мониторинга ($pid) не найден. Очистка данных...${NC}"
             rm -f "$MONITOR_PID_FILE"
             echo -e "${GREEN}[✓] Данные мониторинга очищены.${NC}"
         fi
     else
-        echo -e "${YELLOW}[!] Мониторинг памяти не запущен.${NC}"
+        echo -e "${YELLOW}[!] Мониторинг не запущен.${NC}"
     fi
 }
 
@@ -331,21 +373,21 @@ view_monitoring_history() {
         return 1
     fi
     
-    echo -e "${BLUE}${BOLD}=== История мониторинга памяти ===${NC}"
+    echo -e "${BLUE}${BOLD}=== История мониторинга ===${NC}"
     echo -e "${YELLOW}Содержимое файла ${MONITOR_LOG_FILE}:${NC}"
     echo ""
     
-    # Используем tail для отображения последних 50 строк лога
-    tail -n 50 "$MONITOR_LOG_FILE"
+    # Используем tail для отображения последних 100 строк лога
+    tail -n 100 "$MONITOR_LOG_FILE"
     
     echo ""
-    echo -e "${YELLOW}Показаны последние 50 записей.${NC}"
+    echo -e "${YELLOW}Показаны последние 100 записей.${NC}"
 }
 
 # Функция для отображения подменю мониторинга
 show_monitoring_menu() {
     while true; do
-        echo -e "\n${BLUE}${BOLD}======= Подменю мониторинга памяти ========${NC}"
+        echo -e "\n${BLUE}${BOLD}======= Подменю мониторинга ========${NC}"
         echo -e "${GREEN}1)${NC} Включить мониторинг"
         echo -e "${RED}2)${NC} Выключить мониторинг"
         echo -e "${BLUE}3)${NC} Просмотреть историю мониторинга"
@@ -394,7 +436,7 @@ show_menu() {
     echo -e "${YELLOW}2)${NC} Перезапустить ноду"
     echo -e "${BLUE}3)${NC} Посмотреть логи (подключиться к screen)"
     echo -e "${RED}4)${NC} Удалить ноду"
-    echo -e "${GREEN}5)${NC} Мониторинг использования памяти"
+    echo -e "${GREEN}5)${NC} Мониторинг ноды"
     echo -e "--------------------------------------------------"
     echo -e "${BOLD}0)${NC} Выход"
     echo -e "=================================================="
@@ -425,7 +467,7 @@ while true; do
         0)
             # Проверяем, запущен ли мониторинг при выходе
             if [ -f "$MONITOR_PID_FILE" ] && kill -0 "$(cat "$MONITOR_PID_FILE")" 2>/dev/null; then
-                echo -e "${YELLOW}[!] Мониторинг памяти остается активным и будет работать в фоновом режиме.${NC}"
+                echo -e "${YELLOW}[!] Мониторинг остается активным и будет работать в фоновом режиме.${NC}"
                 echo -e "${YELLOW}    Для его отключения используйте пункт меню '5 -> 2'.${NC}"
             fi
             echo -e "${GREEN}Выход из скрипта.${NC}"
