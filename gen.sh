@@ -294,7 +294,7 @@ check_screen_logs() {
     screen -S gensyn -X hardcopy "$tmp_log_file"
     
     # Проверяем наличие ошибок
-    if grep -q -E "timed out|KeyError: 'question'|Killed" "$tmp_log_file"; then
+    if grep -q -E "timed out|KeyError: 'question'|Killed|AttributeError: 'NoneType' object has no attribute 'split'" "$tmp_log_file"; then
         local error_type="unknown"
         if grep -q "timed out" "$tmp_log_file"; then
             error_type="timed out"
@@ -302,6 +302,8 @@ check_screen_logs() {
             error_type="KeyError: 'question'"
         elif grep -q "Killed" "$tmp_log_file"; then
             error_type="Killed"
+        elif grep -q "AttributeError: 'NoneType' object has no attribute 'split'" "$tmp_log_file"; then
+            error_type="AttributeError: NoneType split"
         fi
         
         echo "[$timestamp] ВНИМАНИЕ: Обнаружена ошибка '$error_type' в логах. Перезапуск ноды..." >> "$MONITOR_LOG_FILE"
@@ -343,7 +345,11 @@ enable_monitoring() {
     echo -e "${YELLOW}Каждые 30 минут будет проверяться использование памяти и наличие ошибок.${NC}"
     echo -e "${YELLOW}Нода будет автоматически перезапущена, если:${NC}"
     echo -e "${YELLOW} - Использование памяти меньше 20%${NC}"
-    echo -e "${YELLOW} - В логах обнаружены ошибки 'timed out', 'KeyError: question' или 'Killed'${NC}"
+    echo -e "${YELLOW} - В логах обнаружены ошибки:${NC}"
+    echo -e "${YELLOW}   * 'timed out'${NC}"
+    echo -e "${YELLOW}   * 'KeyError: question'${NC}"
+    echo -e "${YELLOW}   * 'Killed'${NC}"
+    echo -e "${YELLOW}   * 'AttributeError: NoneType object has no attribute split'${NC}"
     echo -e "${YELLOW}Логи сохраняются в файл: ${MONITOR_LOG_FILE}${NC}"
 }
 
