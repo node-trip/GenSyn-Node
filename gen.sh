@@ -27,43 +27,50 @@ modify_run_script() {
         # 1. Модификация Testnet
         # Используем временный файл
         local tmp_file_testnet=$(mktemp)
-        # Заменяем блок while...done на автоматическое подключение
-        # Определяем текст для замены с правильными переводами строк для sed
-        local replacement_testnet="# Automatically connect to Testnet without asking\\nCONNECT_TO_TESTNET=True\\necho_green \\\">> Automatically connecting to Testnet.\\\""
-
-        sed "/^while true; do/,/^done/c\$replacement_testnet" "$script_path" > "$tmp_file_testnet"
-
-        if [ $? -eq 0 ]; then
-            mv "$tmp_file_testnet" "$script_path"
-            echo -e "${GREEN}[✓] Testnet вопрос удален.${NC}"
+        # Сначала удаляем старый блок while...done
+        sed '/^while true; do/,/^done/d' "$script_path" > "$tmp_file_testnet"
+        if [ $? -ne 0 ]; then
+             echo -e "${RED}${BOLD}[✗] Ошибка удаления блока Testnet.${NC}"
+             rm -f "$tmp_file_testnet"
+             success=false
         else
-            echo -e "${RED}${BOLD}[✗] Ошибка модификации Testnet.${NC}"
-            rm -f "$tmp_file_testnet"
-            success=false
+            # Теперь вставляем новые строки после строки с EOF
+            local tmp_file_insert=$(mktemp)
+            awk '/^EOF$/{print; printf "%s\n", "# Automatically connect to Testnet without asking"; printf "%s\n", "CONNECT_TO_TESTNET=True"; printf "%s\n", "echo_green \">> Automatically connecting to Testnet.\"" ; next}1' "$tmp_file_testnet" > "$tmp_file_insert"
+            if [ $? -eq 0 ]; then
+                mv "$tmp_file_insert" "$script_path"
+                echo -e "${GREEN}[✓] Testnet вопрос удален и заменен.${NC}"
+            else
+                echo -e "${RED}${BOLD}[✗] Ошибка вставки блока Testnet.${NC}"
+                rm -f "$tmp_file_insert"
+                success=false
+            fi
+            rm -f "$tmp_file_testnet" # Удаляем первый временный файл
         fi
 
         # 2. Модификация Hugging Face (если Testnet прошел успешно)
         if [ "$success" = true ]; then
             # Комментируем строки с запросом и обработкой ответа HF
-            sed -i.bak_hf -e '/read -p ".*Hugging Face Hub?.*"/s/^/#/' \
-                       -e '/yn=${yn:-N}/s/^/#/' \
-                       -e '/case \$yn in/s/^/#/' \
-                       -e '/^[[:space:]]*\[Yy\]\*)/s/^/#/' \
-                       -e '/^[[:space:]]*\[Nn\]\*)/s/^/#/' \
-                       -e '/^[[:space:]]*\*)/s/^/#/' \
-                       -e '/^[[:space:]]*esac/s/^/#/' "$script_path"
+            # Используем -i без .bak_hf, чтобы не создавать бэкап на этом шаге,
+            # так как файл уже модифицирован для Testnet
+            sed -i -e '/read -p ".*Hugging Face Hub?.*"/s/^/#/' \
+                   -e '/yn=${yn:-N}/s/^/#/' \
+                   -e '/case \$yn in/s/^/#/' \
+                   -e '/^[[:space:]]*\[Yy\]\*)/s/^/#/' \
+                   -e '/^[[:space:]]*\[Nn\]\*)/s/^/#/' \
+                   -e '/^[[:space:]]*\*)/s/^/#/' \
+                   -e '/^[[:space:]]*esac/s/^/#/' "$script_path"
 
             # Добавляем строку с автоматической установкой HUGGINGFACE_ACCESS_TOKEN="None"
             local tmp_file_hf=$(mktemp)
+            # Вставляем после строки с закомментированным yn=
             awk '/^#.*yn=\${yn:-N}/{print; print "    HUGGINGFACE_ACCESS_TOKEN=\"None\""; next}1' "$script_path" > "$tmp_file_hf"
 
             if [ $? -eq 0 ] && mv "$tmp_file_hf" "$script_path"; then
                 echo -e "${GREEN}[✓] Hugging Face вопрос удален.${NC}"
-                rm -f "${script_path}.bak_hf" # Удаляем резервную копию
             else
                 echo -e "${RED}${BOLD}[✗] Ошибка модификации Hugging Face.${NC}"
-                # Пытаемся восстановить из резервной копии
-                mv "${script_path}.bak_hf" "$script_path" 2>/dev/null
+                # Восстановить из бэкапа здесь будет сложно, так как предыдущий шаг уже прошел
                 success=false
             fi
             rm -f "$tmp_file_hf" # Удаляем временный файл awk в любом случае
