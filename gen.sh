@@ -135,10 +135,8 @@ install_and_run() {
     fi
     echo -e '${BOLD}${YELLOW}[✓] Настройка виртуального окружения Python...${NC}'
     python3 -m venv .venv && source .venv/bin/activate || { echo -e '${RED}${BOLD}[✗] Ошибка настройки виртуального окружения.${NC}'; exit 1; }
-    echo -e '${BOLD}${YELLOW}[✓] Запуск rl-swarm...${NC}'
-    ./run_rl_swarm.sh # Убрали echo 'N' |
-    echo -e '${GREEN}${BOLD}Скрипт rl-swarm завершил работу. Нажмите Enter для выхода из screen.${NC}'
-    read # Ждем нажатия Enter перед выходом из скрипта внутри screen
+    echo -e '${GREEN}${BOLD}[✓] Окружение активировано. Запустите ./run_rl_swarm.sh вручную.${NC}'
+    exec bash
     "
 
     # Создание и запуск команды в screen
@@ -195,10 +193,8 @@ restart_node() {
      cd $SWARM_DIR || { echo -e '${RED}${BOLD}[✗] Не удалось перейти в директорию ${SWARM_DIR}. Выход.'; exit 1; }
      echo -e '${BOLD}${YELLOW}[✓] Активация виртуального окружения...${NC}'
      source .venv/bin/activate || { echo -e '${RED}${BOLD}[✗] Ошибка активации виртуального окружения.${NC}'; exit 1; }
-     echo -e '${BOLD}${YELLOW}[✓] Запуск rl-swarm...${NC}'
-     ./run_rl_swarm.sh # Запускаем существующий скрипт
-     echo -e '${GREEN}${BOLD}Скрипт rl-swarm завершил работу. Нажмите Enter для выхода из screen.${NC}'
-     read # Ждем нажатия Enter перед выходом из скрипта внутри screen
+     echo -e '${GREEN}${BOLD}[✓] Окружение активировано. Запустите ./run_rl_swarm.sh вручную.${NC}'
+     exec bash
      "
 
     # Запуск новой ноды в screen
