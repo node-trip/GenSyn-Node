@@ -206,6 +206,28 @@ install_and_run() {
     # Модифицируем скрипт run_rl_swarm.sh
     modify_run_script "$SWARM_DIR" || exit 1
 
+    # Добавляем отладку set -x / set +x вокруг блока Testnet
+    echo -e "${YELLOW}[!] Добавление временной отладки (set -x) в run_rl_swarm.sh...${NC}"
+    local tmp_debug=$(mktemp)
+    awk '
+    /^if \[ \"\$CONNECT_TO_TESTNET\" = \"True\" \]; then/ {
+        print "set -x # Temporary debug"
+    }
+    { print }
+    /^fi # End of CONNECT_TO_TESTNET block/ {
+         print "set +x # End temporary debug"
+    }
+    ' "$script_path" > "$tmp_debug"
+
+    if [ $? -eq 0 ]; then
+        mv "$tmp_debug" "$script_path"
+        echo -e "${GREEN}[✓] Временная отладка добавлена.${NC}"
+    else
+        echo -e "${RED}${BOLD}[✗] Ошибка добавления временной отладки.${NC}"
+        rm -f "$tmp_debug"
+        # Не выходим, просто продолжаем без отладки
+    fi
+
     # Добавляем права на выполнение
     echo -e "${YELLOW}[!] Добавление прав на выполнение для run_rl_swarm.sh...${NC}"
     chmod +x "$SWARM_DIR/run_rl_swarm.sh"
@@ -271,6 +293,29 @@ restart_node() {
     if [ ! -d "$SWARM_DIR" ]; then
         echo -e "${RED}${BOLD}[✗] Директория ${SWARM_DIR} не найдена. Возможно, нода не была установлена?${NC}"
         return 1
+    fi
+
+    # Добавляем отладку set -x / set +x вокруг блока Testnet (при перезапуске)
+    echo -e "${YELLOW}[!] Добавление временной отладки (set -x) в run_rl_swarm.sh при перезапуске...${NC}"
+    local tmp_debug_restart=$(mktemp)
+     awk '
+    /^if \[ \"\$CONNECT_TO_TESTNET\" = \"True\" \]; then/ {
+        print "set -x # Temporary debug"
+    }
+    { print }
+    # Добавляем комментарий-якорь, если его нет, для set +x
+    /^[[:space:]]*fi[[:space:]]*$/ && !/End of CONNECT_TO_TESTNET block/ { $0 = $0 " # End of CONNECT_TO_TESTNET block" }
+    /^fi # End of CONNECT_TO_TESTNET block/ {
+         print "set +x # End temporary debug"
+    }
+    ' "$script_path" > "$tmp_debug_restart"
+    
+    if [ $? -eq 0 ]; then
+        mv "$tmp_debug_restart" "$script_path"
+        echo -e "${GREEN}[✓] Временная отладка добавлена.${NC}"
+    else
+        echo -e "${RED}${BOLD}[✗] Ошибка добавления временной отладки при перезапуске.${NC}"
+        rm -f "$tmp_debug_restart"
     fi
 
     # Добавляем права на выполнение (ВАЖНО после modify_run_script)
