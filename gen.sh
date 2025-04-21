@@ -22,19 +22,26 @@ modify_run_script() {
     local script_path="$1/run_rl_swarm.sh"
     if [ -f "$script_path" ]; then
         echo -e "${YELLOW}[!] Модификация ${script_path} для отключения вопроса о Hugging Face...${NC}"
-        # Используем временный файл для совместимости с macOS sed
-        local tmp_file=$(mktemp)
-        # Удаляем блок if/else/fi и заменяем его одной строкой
-        sed '/if \[ -n "${HF_TOKEN}" \]; then/,/fi/c\
-HUGGINGFACE_ACCESS_TOKEN="None"
-' "$script_path" > "$tmp_file" && mv "$tmp_file" "$script_path"
+        # Комментируем строки с запросом и обработкой ответа
+        sed -i.bak -e '/read -p ".*Hugging Face Hub?.*"/s/^/#/' \
+                   -e '/yn=${yn:-N}/s/^/#/' \
+                   -e '/case \$yn in/s/^/#/' \
+                   -e '/\[Yy\]\*)/s/^/#/' \
+                   -e '/\[Nn\]\*)/s/^/#/' \
+                   -e '/*)/s/^/#/' \
+                   -e '/esac/s/^/#/' "$script_path"
+
+        # Добавляем строку с автоматической установкой HUGGINGFACE_ACCESS_TOKEN="None"
+        # Используем awk для вставки ПОСЛЕ строки, содержащей 'yn=${yn:-N}' (которая теперь закомментирована)
+        awk '/^#.*yn=\${yn:-N}/{print; print "    HUGGINGFACE_ACCESS_TOKEN=\"None\""; next}1' "$script_path" > "${script_path}.tmp" && mv "${script_path}.tmp" "$script_path"
 
         if [ $? -eq 0 ]; then
             echo -e "${GREEN}${BOLD}[✓] Скрипт ${script_path} успешно модифицирован.${NC}"
+            rm -f "${script_path}.bak" # Удаляем резервную копию
         else
             echo -e "${RED}${BOLD}[✗] Ошибка модификации ${script_path}.${NC}"
-            # Удаляем временный файл в случае ошибки
-            rm -f "$tmp_file"
+            # Восстанавливаем из резервной копии в случае ошибки
+            mv "${script_path}.bak" "$script_path" 2>/dev/null
             return 1
         fi
     else
@@ -113,8 +120,8 @@ install_and_run() {
         echo -e "${GREEN}${BOLD}[✓] Существующая директория $SWARM_DIR удалена.${NC}"
     fi
 
-    echo -e "${BOLD}${YELLOW}[✓] Клонирование репозитория из https://github.com/node-trip/rl-swarm.git...${NC}"
-    git clone https://github.com/node-trip/rl-swarm.git "$SWARM_DIR" # Клонируем сразу в нужную папку
+    echo -e "${BOLD}${YELLOW}[✓] Клонирование репозитория из https://github.com/gensyn-ai/rl-swarm.git...${NC}"
+    git clone https://github.com/gensyn-ai/rl-swarm.git "$SWARM_DIR" # Клонируем сразу в нужную папку
     if [ $? -ne 0 ]; then
         echo -e "${RED}${BOLD}[✗] Ошибка клонирования репозитория.${NC}"
         exit 1
@@ -160,7 +167,7 @@ install_and_run() {
     local run_script_cmd="
     if [ -n \\\"\$VIRTUAL_ENV\\\" ]; then
         echo -e '${BOLD}${YELLOW}[✓] Деактивация существующего виртуального окружения...${NC}'
-        deactivate
+        [ -n \"\$VIRTUAL_ENV\" ] && deactivate
     fi
     echo -e '${BOLD}${YELLOW}[✓] Настройка виртуального окружения Python...${NC}'
     python3 -m venv .venv && source .venv/bin/activate || { echo -e '${RED}${BOLD}[✗] Ошибка настройки виртуального окружения.${NC}'; exit 1; }
