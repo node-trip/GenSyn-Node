@@ -210,7 +210,7 @@ install_and_run() {
     echo -e "${YELLOW}[!] Добавление временной отладки (set -x) в run_rl_swarm.sh...${NC}"
     local tmp_debug=$(mktemp)
     awk '
-    /CONNECT_TO_TESTNET.*=.*"True"/ { # Ищем строку с CONNECT_TO_TESTNET и "True"
+    /CONNECT_TO_TESTNET.*=True/ { # Ищем строку с CONNECT_TO_TESTNET и =True
         print "set -x # Temporary debug"
     }
     { print }
@@ -299,7 +299,7 @@ restart_node() {
     echo -e "${YELLOW}[!] Добавление временной отладки (set -x) в run_rl_swarm.sh при перезапуске...${NC}"
     local tmp_debug_restart=$(mktemp)
      awk '
-    /CONNECT_TO_TESTNET.*=.*"True"/ { # Ищем строку с CONNECT_TO_TESTNET и "True"
+    /CONNECT_TO_TESTNET.*=True/ { # Ищем строку с CONNECT_TO_TESTNET и =True
         print "set -x # Temporary debug"
     }
     { print }
