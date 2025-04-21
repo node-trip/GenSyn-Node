@@ -210,11 +210,11 @@ install_and_run() {
     echo -e "${YELLOW}[!] Добавление временной отладки (set -x) в run_rl_swarm.sh...${NC}"
     local tmp_debug=$(mktemp)
     awk '
-    /^if \[ \"\$CONNECT_TO_TESTNET\" = \"True\" \]; then/ {
+    /^if \\[ \"\$CONNECT_TO_TESTNET\" = \"True\" \\]; then/ {
         print "set -x # Temporary debug"
     }
     { print }
-    /^fi # End of CONNECT_TO_TESTNET block/ {
+    /^pip_install\(\) {/ {
          print "set +x # End temporary debug"
     }
     ' "$script_path" > "$tmp_debug"
@@ -299,13 +299,14 @@ restart_node() {
     echo -e "${YELLOW}[!] Добавление временной отладки (set -x) в run_rl_swarm.sh при перезапуске...${NC}"
     local tmp_debug_restart=$(mktemp)
      awk '
-    /^if \[ \"\$CONNECT_TO_TESTNET\" = \"True\" \]; then/ {
+    /^if \\[ \"\$CONNECT_TO_TESTNET\" = \"True\" \\]; then/ {
         print "set -x # Temporary debug"
     }
     { print }
     # Добавляем комментарий-якорь, если его нет, для set +x
-    /^[[:space:]]*fi[[:space:]]*$/ && !/End of CONNECT_TO_TESTNET block/ { $0 = $0 " # End of CONNECT_TO_TESTNET block" }
-    /^fi # End of CONNECT_TO_TESTNET block/ {
+    # /^[[:space:]]*fi[[:space:]]*$/ && !/End of CONNECT_TO_TESTNET block/ { $0 = $0 " # End of CONNECT_TO_TESTNET block" }
+    # /^fi # End of CONNECT_TO_TESTNET block/ {
+    /^pip_install\(\) {/ { # Вставляем перед определением функции pip_install
          print "set +x # End temporary debug"
     }
     ' "$script_path" > "$tmp_debug_restart"
