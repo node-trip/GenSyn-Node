@@ -21,27 +21,60 @@ MONITOR_PID_FILE="$MONITOR_LOG_DIR/monitor.pid"
 modify_run_script() {
     local script_path="$1/run_rl_swarm.sh"
     if [ -f "$script_path" ]; then
-        echo -e "${YELLOW}[!] Модификация ${script_path} для отключения вопроса о Hugging Face...${NC}"
-        # Комментируем строки с запросом и обработкой ответа
-        sed -i.bak -e '/read -p ".*Hugging Face Hub?.*"/s/^/#/' \
-                   -e '/yn=${yn:-N}/s/^/#/' \
-                   -e '/case \$yn in/s/^/#/' \
-                   -e '/\[Yy\]\*)/s/^/#/' \
-                   -e '/\[Nn\]\*)/s/^/#/' \
-                   -e '/*)/s/^/#/' \
-                   -e '/esac/s/^/#/' "$script_path"
+        echo -e "${YELLOW}[!] Модификация ${script_path} для автоматического выбора Testnet и Hugging Face...${NC}"
+        local success=true
 
-        # Добавляем строку с автоматической установкой HUGGINGFACE_ACCESS_TOKEN="None"
-        # Используем awk для вставки ПОСЛЕ строки, содержащей 'yn=${yn:-N}' (которая теперь закомментирована)
-        awk '/^#.*yn=\${yn:-N}/{print; print "    HUGGINGFACE_ACCESS_TOKEN=\"None\""; next}1' "$script_path" > "${script_path}.tmp" && mv "${script_path}.tmp" "$script_path"
+        # 1. Модификация Testnet
+        # Используем временный файл
+        local tmp_file_testnet=$(mktemp)
+        # Заменяем блок while...done на автоматическое подключение
+        # Определяем текст для замены с правильными переводами строк для sed
+        local replacement_testnet="# Automatically connect to Testnet without asking\\nCONNECT_TO_TESTNET=True\\necho_green \\\">> Automatically connecting to Testnet.\\\""
+
+        sed "/^while true; do/,/^done/c\$replacement_testnet" "$script_path" > "$tmp_file_testnet"
 
         if [ $? -eq 0 ]; then
-            echo -e "${GREEN}${BOLD}[✓] Скрипт ${script_path} успешно модифицирован.${NC}"
-            rm -f "${script_path}.bak" # Удаляем резервную копию
+            mv "$tmp_file_testnet" "$script_path"
+            echo -e "${GREEN}[✓] Testnet вопрос удален.${NC}"
         else
-            echo -e "${RED}${BOLD}[✗] Ошибка модификации ${script_path}.${NC}"
-            # Восстанавливаем из резервной копии в случае ошибки
-            mv "${script_path}.bak" "$script_path" 2>/dev/null
+            echo -e "${RED}${BOLD}[✗] Ошибка модификации Testnet.${NC}"
+            rm -f "$tmp_file_testnet"
+            success=false
+        fi
+
+        # 2. Модификация Hugging Face (если Testnet прошел успешно)
+        if [ "$success" = true ]; then
+            # Комментируем строки с запросом и обработкой ответа HF
+            sed -i.bak_hf -e '/read -p ".*Hugging Face Hub?.*"/s/^/#/' \
+                       -e '/yn=${yn:-N}/s/^/#/' \
+                       -e '/case \$yn in/s/^/#/' \
+                       -e '/^[[:space:]]*\[Yy\]\*)/s/^/#/' \
+                       -e '/^[[:space:]]*\[Nn\]\*)/s/^/#/' \
+                       -e '/^[[:space:]]*\*)/s/^/#/' \
+                       -e '/^[[:space:]]*esac/s/^/#/' "$script_path"
+
+            # Добавляем строку с автоматической установкой HUGGINGFACE_ACCESS_TOKEN="None"
+            local tmp_file_hf=$(mktemp)
+            awk '/^#.*yn=\${yn:-N}/{print; print "    HUGGINGFACE_ACCESS_TOKEN=\"None\""; next}1' "$script_path" > "$tmp_file_hf"
+
+            if [ $? -eq 0 ] && mv "$tmp_file_hf" "$script_path"; then
+                echo -e "${GREEN}[✓] Hugging Face вопрос удален.${NC}"
+                rm -f "${script_path}.bak_hf" # Удаляем резервную копию
+            else
+                echo -e "${RED}${BOLD}[✗] Ошибка модификации Hugging Face.${NC}"
+                # Пытаемся восстановить из резервной копии
+                mv "${script_path}.bak_hf" "$script_path" 2>/dev/null
+                success=false
+            fi
+            rm -f "$tmp_file_hf" # Удаляем временный файл awk в любом случае
+        fi
+
+        # Итоговый результат
+        if [ "$success" = true ]; then
+            echo -e "${GREEN}${BOLD}[✓] Скрипт ${script_path} успешно модифицирован для автоматического запуска.${NC}"
+            return 0
+        else
+             echo -e "${RED}${BOLD}[✗] Общая ошибка модификации ${script_path}.${NC}"
             return 1
         fi
     else
