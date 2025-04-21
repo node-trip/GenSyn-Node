@@ -17,95 +17,6 @@ MONITOR_LOG_DIR="$HOME/.gensyn_monitor"
 MONITOR_LOG_FILE="$MONITOR_LOG_DIR/monitor.log"
 MONITOR_PID_FILE="$MONITOR_LOG_DIR/monitor.pid"
 
-# Функция для модификации run_rl_swarm.sh (Protobuf fix + Auto Testnet/HF)
-modify_run_script() {
-    local script_path="$1/run_rl_swarm.sh"
-    if [ -f "$script_path" ]; then
-        echo -e "${YELLOW}[!] Модификация ${script_path} (Protobuf fix, Auto Testnet/HF)...${NC}"
-        local success=true
-        local tmp_file=$(mktemp)
-
-        # 0. Применить Protobuf fix
-        # Вставляем строки перед pip_install requirements-hivemind.txt
-        awk '
-        /^pip_install "\$ROOT"\/requirements-hivemind\.txt/ {
-            print "# Force install a compatible protobuf version before installing hivemind requirements"
-            print "echo_green \">> Installing compatible protobuf version...\""
-            print "pip install --disable-pip-version-check -q \"protobuf>=3.12.2,<5.28.0\""
-        }
-        { print }
-        ' "$script_path" > "$tmp_file"
-
-        if [ $? -eq 0 ]; then
-             mv "$tmp_file" "$script_path"
-             echo -e "${GREEN}[✓] Protobuf fix применен.${NC}"
-        else
-             echo -e "${RED}${BOLD}[✗] Ошибка применения Protobuf fix.${NC}"
-             rm -f "$tmp_file"
-             return 1 # Выходим, если патч не применился
-        fi 
-
-        # 1. Модификация Testnet (теперь применяем к уже пропатченному файлу)
-        tmp_file=$(mktemp) # Новый временный файл
-        # Сначала удаляем старый блок while...done
-        sed '/^while true; do/,/^done/d' "$script_path" > "$tmp_file"
-        if [ $? -ne 0 ]; then
-             echo -e "${RED}${BOLD}[✗] Ошибка удаления блока Testnet.${NC}"
-             rm -f "$tmp_file"
-             success=false
-        else
-            # Теперь вставляем новые строки после строки с EOF
-            local tmp_file_insert=$(mktemp)
-            awk '/^EOF$/{print; printf "%s\n", "# Automatically connect to Testnet without asking"; printf "%s\n", "CONNECT_TO_TESTNET=True"; printf "%s\n", "echo_green \">> Automatically connecting to Testnet.\"" ; next}1' "$tmp_file" > "$tmp_file_insert"
-            if [ $? -eq 0 ]; then
-                mv "$tmp_file_insert" "$script_path"
-                echo -e "${GREEN}[✓] Testnet вопрос удален и заменен.${NC}"
-            else
-                echo -e "${RED}${BOLD}[✗] Ошибка вставки блока Testnet.${NC}"
-                rm -f "$tmp_file_insert"
-                success=false
-            fi
-            rm -f "$tmp_file" # Удаляем первый временный файл sed
-        fi
-
-        # 2. Модификация Hugging Face (если Testnet прошел успешно)
-        if [ "$success" = true ]; then
-            # Комментируем строки с запросом и обработкой ответа HF
-            sed -i -e '/read -p ".*Hugging Face Hub?.*"/s/^/#/' \
-                   -e '/yn=${yn:-N}/s/^/#/' \
-                   -e '/case \$yn in/s/^/#/' \
-                   -e '/^[[:space:]]*\[Yy\]\*)/s/^/#/' \
-                   -e '/^[[:space:]]*\[Nn\]\*)/s/^/#/' \
-                   -e '/^[[:space:]]*\*)/s/^/#/' \
-                   -e '/^[[:space:]]*esac/s/^/#/' "$script_path"
-
-            # Добавляем строку с автоматической установкой HUGGINGFACE_ACCESS_TOKEN="None"
-            tmp_file=$(mktemp) # Новый временный файл
-            awk '/^#.*yn=\${yn:-N}/{print; print "    HUGGINGFACE_ACCESS_TOKEN=\"None\""; next}1' "$script_path" > "$tmp_file"
-
-            if [ $? -eq 0 ] && mv "$tmp_file" "$script_path"; then
-                echo -e "${GREEN}[✓] Hugging Face вопрос удален.${NC}"
-            else
-                echo -e "${RED}${BOLD}[✗] Ошибка модификации Hugging Face.${NC}"
-                rm -f "$tmp_file"
-                success=false
-            fi
-        fi
-
-        # Итоговый результат
-        if [ "$success" = true ]; then
-            echo -e "${GREEN}${BOLD}[✓] Скрипт ${script_path} успешно модифицирован (Protobuf, Auto Testnet/HF).${NC}"
-            return 0
-        else
-             echo -e "${RED}${BOLD}[✗] Общая ошибка модификации ${script_path}.${NC}"
-            return 1
-        fi
-    else
-        echo -e "${RED}${BOLD}[✗] Скрипт ${script_path} не найден для модификации.${NC}"
-        return 1
-    fi
-}
-
 # Функция для отложенного запуска мониторинга
 delayed_monitoring_start() {
     # Проверяем, не запущен ли уже отложенный запуск
@@ -203,31 +114,6 @@ install_and_run() {
          echo -e "${GREEN}${BOLD}[✓] Существующие файлы конфигурации перемещены.${NC}"
     fi
 
-    # Модифицируем скрипт run_rl_swarm.sh
-    modify_run_script "$SWARM_DIR" || exit 1
-
-    # Добавляем отладку set -x / set +x вокруг блока Testnet
-    echo -e "${YELLOW}[!] Добавление временной отладки (set -x) в run_rl_swarm.sh...${NC}"
-    local tmp_debug=$(mktemp)
-    awk '
-    /CONNECT_TO_TESTNET.*=True/ { # Ищем строку с CONNECT_TO_TESTNET и =True
-        print "set -x # Temporary debug"
-    }
-    { print }
-    /^pip_install\(\) {/ {
-         print "set +x # End temporary debug"
-    }
-    ' "$script_path" > "$tmp_debug"
-
-    if [ $? -eq 0 ]; then
-        mv "$tmp_debug" "$script_path"
-        echo -e "${GREEN}[✓] Временная отладка добавлена.${NC}"
-    else
-        echo -e "${RED}${BOLD}[✗] Ошибка добавления временной отладки.${NC}"
-        rm -f "$tmp_debug"
-        # Не выходим, просто продолжаем без отладки
-    fi
-
     # Добавляем права на выполнение
     echo -e "${YELLOW}[!] Добавление прав на выполнение для run_rl_swarm.sh...${NC}"
     chmod +x "$SWARM_DIR/run_rl_swarm.sh"
@@ -293,30 +179,6 @@ restart_node() {
     if [ ! -d "$SWARM_DIR" ]; then
         echo -e "${RED}${BOLD}[✗] Директория ${SWARM_DIR} не найдена. Возможно, нода не была установлена?${NC}"
         return 1
-    fi
-
-    # Добавляем отладку set -x / set +x вокруг блока Testnet (при перезапуске)
-    echo -e "${YELLOW}[!] Добавление временной отладки (set -x) в run_rl_swarm.sh при перезапуске...${NC}"
-    local tmp_debug_restart=$(mktemp)
-     awk '
-    /CONNECT_TO_TESTNET.*=True/ { # Ищем строку с CONNECT_TO_TESTNET и =True
-        print "set -x # Temporary debug"
-    }
-    { print }
-    # Добавляем комментарий-якорь, если его нет, для set +x
-    # /^[[:space:]]*fi[[:space:]]*$/ && !/End of CONNECT_TO_TESTNET block/ { $0 = $0 " # End of CONNECT_TO_TESTNET block" }
-    # /^fi # End of CONNECT_TO_TESTNET block/ {
-    /^pip_install\(\) {/ { # Вставляем перед определением функции pip_install
-         print "set +x # End temporary debug"
-    }
-    ' "$script_path" > "$tmp_debug_restart"
-    
-    if [ $? -eq 0 ]; then
-        mv "$tmp_debug_restart" "$script_path"
-        echo -e "${GREEN}[✓] Временная отладка добавлена.${NC}"
-    else
-        echo -e "${RED}${BOLD}[✗] Ошибка добавления временной отладки при перезапуске.${NC}"
-        rm -f "$tmp_debug_restart"
     fi
 
     # Добавляем права на выполнение (ВАЖНО после modify_run_script)
